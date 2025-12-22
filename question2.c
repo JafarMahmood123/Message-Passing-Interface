@@ -12,17 +12,17 @@ int main(int argc, char** argv) {
     double start_time = MPI_Wtime();
 
     // Find out rank, size
-    int world_rank;
-    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-    int world_size;
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    int process_rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &process_rank);
+    int num_processes;
+    MPI_Comm_size(MPI_COMM_WORLD, &num_processes);
 
     double *X = NULL;
     double *local_X = NULL;
     int *sendcounts = NULL;
     int *displs = NULL;
 
-    if (world_rank == 0) {
+    if (process_rank == 0) {
         // Generate random array
         X = (double*)malloc(ARRAY_SIZE * sizeof(double));
         srand(time(NULL));
@@ -31,12 +31,12 @@ int main(int argc, char** argv) {
         }
 
         // Calculate sendcounts and displacements for uneven distribution
-        sendcounts = (int*)malloc(world_size * sizeof(int));
-        displs = (int*)malloc(world_size * sizeof(int));
-        int base_count = ARRAY_SIZE / world_size;
-        int remainder = ARRAY_SIZE % world_size;
+        sendcounts = (int*)malloc(num_processes * sizeof(int));
+        displs = (int*)malloc(num_processes * sizeof(int));
+        int base_count = ARRAY_SIZE / num_processes;
+        int remainder = ARRAY_SIZE % num_processes;
         int offset = 0;
-        for (int i = 0; i < world_size; i++) {
+        for (int i = 0; i < num_processes; i++) {
             sendcounts[i] = base_count + (i < remainder ? 1 : 0);
             displs[i] = offset;
             offset += sendcounts[i];
@@ -45,16 +45,16 @@ int main(int argc, char** argv) {
 
     // Broadcast sendcounts to all processes
     int local_count;
-    if (world_rank != 0) {
-        sendcounts = (int*)malloc(world_size * sizeof(int));
+    if (process_rank != 0) {
+        sendcounts = (int*)malloc(num_processes * sizeof(int));
     }
     MPI_Bcast(
       /* data         = */ sendcounts,
-      /* count        = */ world_size,
+      /* count        = */ num_processes,
       /* datatype     = */ MPI_INT,
       /* root         = */ 0,
       /* communicator = */ MPI_COMM_WORLD);
-    local_count = sendcounts[world_rank];
+    local_count = sendcounts[process_rank];
 
     // Allocate local array
     local_X = (double*)malloc(local_count * sizeof(double));
@@ -72,9 +72,9 @@ int main(int argc, char** argv) {
       /* comm        = */ MPI_COMM_WORLD);
 
     // Print received elements
-    printf("Process %d received %d elements: ", world_rank, local_count);
+    printf("Process %d received %d elements: ", process_rank, local_count);
     for (int i = 0; i < local_count; i++) {
-        printf("%.2f ", local_X[i]);
+        printf("%.15g ", local_X[i]);
     }
     printf("\n");
 
@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
         local_sum += local_X[i];
     }
     double local_avg = local_sum / local_count;
-    printf("Process %d: Local sum = %.2f, Local average = %.6f\n", world_rank, local_sum, local_avg);
+    printf("Process %d: Local sum = %.15g, Local average = %.15g\n", process_rank, local_sum, local_avg);
 
     // Compute global sum and total count using Allreduce for correct global average
     double global_sum;
@@ -115,15 +115,23 @@ int main(int argc, char** argv) {
       /* datatype   = */ MPI_DOUBLE,
       /* op         = */ MPI_SUM,
       /* comm       = */ MPI_COMM_WORLD);
-    double avg_of_avgs = sum_of_local_avgs / world_size;
+    double avg_of_avgs = sum_of_local_avgs / num_processes;
 
-    printf("Process %d: Correct global average = %.6f, Average of local averages = %.6f\n", world_rank, global_avg, avg_of_avgs);
+    printf("Process %d: Correct global average = %.15g, Average of local averages = %.15g\n", process_rank, global_avg, avg_of_avgs);
 
     double end_time = MPI_Wtime();
-    printf("Process %d: Execution time = %.6f seconds\n", world_rank, end_time - start_time);
+    double execution_time = end_time - start_time;
+    printf("Process %d: Execution time = %.15g seconds\n", process_rank, execution_time);
+
+    // Compute total time as sum of all execution times
+    double total_time;
+    MPI_Allreduce(&execution_time, &total_time, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if (process_rank == 0) {
+        printf("Total time (sum of all process times) = %.15g seconds\n", total_time);
+    }
 
     // Free memory
-    if (world_rank == 0) {
+    if (process_rank == 0) {
         free(X);
         free(sendcounts);
         free(displs);
